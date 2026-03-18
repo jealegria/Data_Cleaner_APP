@@ -1,0 +1,134 @@
+REGISTRO DE PROCESO — ANÁLISIS Y NORMALIZACIÓN DE ARCHIVOS
+Sala de Situación HPN
+Fecha de inicio: marzo 2026
+============================================================
+
+
+CONTEXTO
+--------
+Se trabaja con bases de datos hospitalarias descargadas desde sistemas
+internos (Intranet, Andes y similares). Las bases corresponden a:
+internaciones, guardia de adultos, guardia pediátrica, agenda y fuera
+de agenda. Los archivos se descargan semanalmente o mensualmente y se
+acumulan con una ventana máxima de 3 años.
+
+
+PROBLEMA INICIAL
+----------------
+Se detectó que la base de guardia de adultos (guardia_adultos_2025.csv),
+al ser leída con pandas, mostraba 1067 registros con fechas nulas en las
+columnas Fecha de ingreso, Fecha de atención y Fecha de egreso. Los
+registros afectados estaban en un bloque continuo (índices 22426 a 23492).
+
+La investigación mostró que las celdas no contenían strings vacíos ni
+espacios: eran NaN reales. Al inspeccionar el CSV crudo con un script
+línea por línea, se confirmó que en ese bloque los campos de fecha
+simplemente no tenían valor (campos vacíos entre delimitadores).
+
+La causa raíz: el archivo que descarga el sistema no es un Excel real
+sino un HTML con extensión .xls. Al abrirlo con Excel y re-exportarlo
+como CSV, Excel pierde las fechas de ese bloque. El archivo original
+en cambio, leído directamente con BeautifulSoup, no presenta ningún
+nulo en esas columnas.
+
+Conclusión: el archivo .xls del sistema de guardia no debe abrirse ni
+re-exportarse manualmente. Debe leerse siempre en su estado crudo.
+
+
+TIPOS DE ARCHIVO ENCONTRADOS
+-----------------------------
+Durante el análisis se identificaron tres tipos posibles de archivo:
+
+1. CSV real: archivo de texto delimitado, con encoding variable
+   (windows-1252, utf-8, utf-8-sig, latin-1) y separador variable
+   (coma, punto y coma, tabulación, pipe).
+
+2. Excel binario real: archivos .xlsx (engine openpyxl) o .xls binario
+   legítimo (engine xlrd).
+
+3. HTML disfrazado de .xls: archivo HTML generado por sistemas legados
+   (ASP/PHP) con extensión .xls. Excel lo abre sin problema, pero
+   xlrd lo rechaza porque no es binario. Se detecta leyendo los primeros
+   512 bytes y buscando la firma "<!DOCTYPE" o "<html". Se lee con
+   BeautifulSoup + lxml, parseando la tabla HTML directamente.
+   Encoding habitual: utf-8.
+
+
+1. Type Tool — Advanced Data Scanning (app_analizar_archivos.py)
+   Se unificaron las herramientas anteriores en una sola aplicación premium con interfaz de pestañas:
+
+   A. Pestaña "Process Data":
+      - Análisis forense de archivos y normalización masiva.
+      - Soporte para archivos individuales o carpetas completas.
+      - Consolidación opcional de múltiples archivos en uno solo.
+      - Persistencia de rutas de entrada/salida.
+      - Reporte de log y esquema de base de datos integrado.
+
+   B. Pestaña "Modify Data" (Preparación para Supabase):
+      - Explorador de estructura: extrae tipos de datos sugeridos para Supabase, conteo de nulos y ejemplos.
+      - Selección de columnas: permite tildar qué columnas específicas queremos conservar para la exportación final.
+      - Sistema de Presets: permite guardar y cargar selecciones de columnas (ej: preset "Internaciones", "Guardia") para repetir el proceso instantáneamente.
+      - Filtrado y guardado: genera un nuevo CSV limpio con el esquema exacto definido por el usuario.
+
+   C. Mejoras Estéticas y UX:
+      - Interfaz Dark Premium con paleta de colores moderna.
+      - Icono de aplicación personalizado y diálogos estilizados.
+      - Botones de acceso rápido "🚀 Open" para abrir carpetas de origen y destino desde la app.
+      - Consolas con scroll horizontal para lectura de reportes anchos.
+
+   Paso 1 - Carga: detecta el tipo y carga usando el método correcto.
+   Todos los valores se cargan como string (dtype=str,
+   keep_default_na=False) para evitar que pandas interprete nulos
+   o tipos antes de la limpieza.
+
+   Paso 2 - Columnas: los nombres de columna se normalizan a snake_case
+   sin acentos ni caracteres especiales (ej: "Fecha de ingreso" →
+   "fecha_de_ingreso"). Si tras la normalización hay columnas con el
+   mismo nombre, se les agrega sufijo numérico (_1, _2, etc.).
+
+   Paso 3 - Limpieza de datos: strip de espacios en todos los valores.
+   Strings vacíos, 'nan', 'None', 'NaN' se convierten a NaN real
+   (np.nan). Los acentos y la ñ en los valores se preservan.
+
+   Paso 4 - Fechas: se detectan columnas de fecha por palabras clave
+   en el nombre (fecha, ingreso, egreso, atencion, nacimiento, alta,
+   baja, date). Se parsean con format='mixed' y dayfirst=True para
+   respetar el formato argentino dd/mm/yyyy. Se convierten a ISO
+   (yyyy-mm-dd HH:MM:SS) para compatibilidad con Supabase. Los valores
+   que no parsean quedan como NaN y se reportan con ejemplos.
+
+   Paso 5 - Guardado: el archivo se guarda como CSV con encoding
+   utf-8-sig (UTF-8 con BOM, necesario para que Excel en Windows
+   reconozca correctamente los acentos y la ñ), separador punto y coma,
+   con el sufijo _normalizado en el nombre.
+
+
+DECISIONES DE DISEÑO
+--------------------
+- Encoding de salida: utf-8-sig. Elegido porque es el estándar para
+  CSVs en entornos Windows hispanohablantes. Excel lo interpreta
+  correctamente sin romper acentos ni ñ. Python y pandas lo leen
+  ignorando el BOM automáticamente. Supabase también lo acepta.
+
+- Separador de salida: punto y coma (;). Elegido para evitar conflictos
+  con comas en valores de texto libre (diagnósticos, direcciones, etc.).
+
+- Fechas en almacenamiento: formato ISO (yyyy-mm-dd HH:MM:SS).
+  Para visualización en informes y gráficos se convierte al momento
+  de mostrar con strftime('%d/%m/%Y').
+
+- Los acentos y la ñ se eliminan SOLO en nombres de columna, nunca
+  en valores. Los valores con caracteres especiales (apellidos,
+  diagnósticos, direcciones) se preservan intactos.
+
+- El archivo .xls del sistema de guardia no debe ser modificado antes
+  de procesarse. Debe pasarse directamente al normalizador.
+
+
+ESTADO ACTUAL
+-------------
+- Aplicación "Type Tool" unificada y funcional: análisis, normalización y filtrado.
+- Preparación lista para Supabase: tipos de datos inferidos y exportación selectiva de columnas.
+- Sistema de Presets implementado para agilizar tareas repetitivas.
+
+Próximo paso: Definir los scripts de migración (upsert) hacia Supabase usando los archivos filtrados por la herramienta.

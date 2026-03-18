@@ -1,0 +1,7 @@
+chardet
+pandas
+numpy
+beautifulsoup4
+lxml
+openpyxl
+xlrd
