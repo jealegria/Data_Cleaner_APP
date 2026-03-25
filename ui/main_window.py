@@ -30,6 +30,7 @@ def get_asset_path():
 
 from core.scanner import *
 from core.normalizer import *
+from core.presets import hpn_guardia_process
 
 class App(tk.Tk):
     def __init__(self):
@@ -78,12 +79,35 @@ class App(tk.Tk):
         self.salida_var  = tk.StringVar()
         self.modify_file_var = tk.StringVar()
         self.modify_salida_var = tk.StringVar()
+        self.preset_file_var = tk.StringVar()
+        self.preset_action_var = tk.StringVar(value="Select Preset Action...")
+        
+        # Specific Vars for Guardia HPN Process 1
+        self.hpn_adultos_var = tk.StringVar()
+        self.hpn_pediatria_var = tk.StringVar()
+        self.hpn_output_var = tk.StringVar()
+        
         self.consolidar_var = tk.BooleanVar()
         
         self.df_modify = None
         self.mod_checkboxes = {} # {col_name: BooleanVar}
         self.current_mod_subtab = 0
         self.presets = {} # {name: [cols]}
+
+        self.preset_details = {
+            "Select Preset Action...": "Selecciona una acción para ver su descripción.",
+            "Guardia HPN Process 1": (
+                "Esta acción consolida y limpia datos de Guardia HPN (Adultos y Pediatría).\n\n"
+                "PROCESO:\n"
+                "• Consolidación: Une archivos de ambas carpetas con trazabilidad por 'servicio'.\n"
+                "• Deduplicación: Elimina registros duplicados basados en 'id'.\n"
+                "• Limpieza DNI: Crea la col 'dni' extrayendo solo números de 'documento'.\n"
+                "• Cálculo Edad: Crea 'edad_dias' (entero) procesando años, meses y días.\n"
+                "• Limpieza CIE10: Extrae solo el código (ej: K08.8) de la descripción.\n"
+                "• Formato Final: Mantiene solo las 14 columnas requeridas para Supabase."
+            ),
+            "Other placeholder action...": "Descripción de la otra acción de prueba."
+        }
         
         self._load_config()
         
@@ -91,6 +115,9 @@ class App(tk.Tk):
         self.entrada_var.trace_add("write", lambda *args: self._save_config())
         self.salida_var.trace_add("write", lambda *args: self._save_config())
         self.modify_salida_var.trace_add("write", lambda *args: self._save_config())
+        self.hpn_adultos_var.trace_add("write", lambda *args: self._save_config())
+        self.hpn_pediatria_var.trace_add("write", lambda *args: self._save_config())
+        self.hpn_output_var.trace_add("write", lambda *args: self._save_config())
         
         self._build_ui()
 
@@ -99,7 +126,10 @@ class App(tk.Tk):
             "input": str(Path.home() / "Desktop" / "csv_crudos"),
             "output": str(Path.home() / "Desktop" / "csv_limpios"),
             "modify_output": str(Path.home() / "Desktop" / "csv_limpios"),
-            "presets": {}
+            "presets": {},
+            "hpn_adultos": "",
+            "hpn_pediatria": "",
+            "hpn_output": ""
         }
         if self.config_path.exists():
             try:
@@ -108,6 +138,9 @@ class App(tk.Tk):
                     self.entrada_var.set(cfg.get("input", defaults["input"]))
                     self.salida_var.set(cfg.get("output", defaults["output"]))
                     self.modify_salida_var.set(cfg.get("modify_output", defaults["modify_output"]))
+                    self.hpn_adultos_var.set(cfg.get("hpn_adultos", defaults["hpn_adultos"]))
+                    self.hpn_pediatria_var.set(cfg.get("hpn_pediatria", defaults["hpn_pediatria"]))
+                    self.hpn_output_var.set(cfg.get("hpn_output", defaults["hpn_output"]))
                     self.presets = cfg.get("presets", {})
                     return
             except:
@@ -115,13 +148,20 @@ class App(tk.Tk):
         self.entrada_var.set(defaults["input"])
         self.salida_var.set(defaults["output"])
         self.modify_salida_var.set(defaults["modify_output"])
+        self.hpn_adultos_var.set(defaults["hpn_adultos"])
+        self.hpn_pediatria_var.set(defaults["hpn_pediatria"])
+        self.hpn_output_var.set(defaults["hpn_output"])
         self.presets = defaults["presets"]
+
 
     def _save_config(self):
         cfg = {
             "input": self.entrada_var.get(),
             "output": self.salida_var.get(),
             "modify_output": self.modify_salida_var.get(),
+            "hpn_adultos": self.hpn_adultos_var.get(),
+            "hpn_pediatria": self.hpn_pediatria_var.get(),
+            "hpn_output": self.hpn_output_var.get(),
             "presets": self.presets
         }
         try:
@@ -169,10 +209,16 @@ class App(tk.Tk):
             
             if idx == 0:
                 self.frame_modify.pack_forget()
+                self.frame_presets.pack_forget()
                 self.frame_process.pack(fill="both", expand=True)
+            elif idx == 1:
+                self.frame_process.pack_forget()
+                self.frame_presets.pack_forget()
+                self.frame_modify.pack(fill="both", expand=True)
             else:
                 self.frame_process.pack_forget()
-                self.frame_modify.pack(fill="both", expand=True)
+                self.frame_modify.pack_forget()
+                self.frame_presets.pack(fill="both", expand=True)
 
         self.main_tab_btns = []
         t1 = tk.Button(main_tab_bar, text="PROCESS DATA", font=self.FONT_BOLD, 
@@ -184,8 +230,14 @@ class App(tk.Tk):
         t2 = tk.Button(main_tab_bar, text="MODIFY DATA", font=self.FONT_BOLD, 
                        bg=self.BG, fg=self.SUBTEXT, relief="flat", padx=20, pady=10, 
                        cursor="hand2", command=lambda: switch_main_tab(1))
-        t2.pack(side="left")
+        t2.pack(side="left", padx=(0, 5))
         self.main_tab_btns.append(t2)
+
+        t3 = tk.Button(main_tab_bar, text="QUICK PRESETS", font=self.FONT_BOLD, 
+                       bg=self.BG, fg=self.SUBTEXT, relief="flat", padx=20, pady=10, 
+                       cursor="hand2", command=lambda: switch_main_tab(2))
+        t3.pack(side="left")
+        self.main_tab_btns.append(t3)
 
         # ── Content Area ──────────────────────────────────────
         self.content_area = tk.Frame(self, bg=self.BG)
@@ -482,6 +534,86 @@ class App(tk.Tk):
         self.console_modify.pack(fill="both", expand=True, padx=25)
         self.mod_hs.pack(fill="x", padx=25, pady=(0, 20))
 
+        switch_mod_subtab(0)
+
+        # ── TAB 3: Quick Presets ──────────────────────────────
+        self.frame_presets = tk.Frame(self.content_area, bg=self.BG)
+        # self.frame_presets will be packed via switch_main_tab
+        
+        # Presets Header
+        pre_cfg = tk.Frame(self.frame_presets, bg=self.BG, padx=25, pady=10)
+        pre_cfg.pack(fill="x")
+        pre_cfg.columnconfigure(0, weight=1)
+
+        tk.Label(pre_cfg, text="ONE-CLICK AUTOMATION PRESETS", font=self.FONT_BOLD, bg=self.BG, fg=self.SUBTEXT).grid(
+            row=0, column=0, sticky="w", pady=(0, 5))
+
+        # Action Selection
+        action_row = tk.Frame(pre_cfg, bg=self.BG)
+        action_row.grid(row=1, column=0, sticky="ew", pady=(5, 15))
+        
+        tk.Label(action_row, text="SELECT ACTION:", font=self.FONT_BOLD, bg=self.BG, fg=self.TEXT).pack(side="left", padx=(0, 10))
+        
+        self.preset_action_menu = tk.OptionMenu(action_row, self.preset_action_var, 
+                                              "Guardia HPN Process 1", 
+                                              "Other placeholder action...",
+                                              command=self._update_preset_inputs)
+        self.preset_action_menu.config(font=self.FONT_UI, bg=self.BTN_BG, fg=self.TEXT, relief="flat", highlightthickness=0, bd=0)
+        self.preset_action_menu["menu"].config(font=self.FONT_UI, bg=self.BTN_BG, fg=self.TEXT)
+        self.preset_action_menu.pack(side="left")
+
+        # Info Button
+        self.btn_preset_info = tk.Button(action_row, text="ⓘ", font=("Segoe UI", 12),
+                                        bg=self.BG, fg=self.ACCENT, activebackground=self.BG,
+                                        activeforeground="white", relief="flat", bd=0, 
+                                        cursor="hand2", command=self._show_preset_info)
+        self.btn_preset_info.pack(side="left", padx=5)
+
+        # Dynamic Inputs Container
+        self.preset_inputs_frame = tk.Frame(self.frame_presets, bg=self.BG, padx=25)
+        self.preset_inputs_frame.pack(fill="x")
+        
+        self._update_preset_inputs() # Initialize UI
+
+        # Execute Button
+        pre_action_bar = tk.Frame(self.frame_presets, bg=self.BG, padx=25, pady=15)
+        pre_action_bar.pack(fill="x")
+        
+        self.btn_run_preset = tk.Button(
+            pre_action_bar, text="⚡ EXECUTE PRESET",
+            command=self._ejecutar_preset,
+            font=("Segoe UI", 11, "bold"),
+            bg="#238636", fg="white",
+            activebackground="#2EA043", activeforeground="white",
+            relief="flat", bd=0, padx=35, pady=12, cursor="hand2"
+        )
+        self.btn_run_preset.pack(side="left")
+
+        tk.Frame(self.frame_presets, bg=self.BORDER, height=1).pack(fill="x", pady=(5, 0))
+
+        # Preset Console Area
+        pre_tab_area = tk.Frame(self.frame_presets, bg=self.PANEL)
+        pre_tab_area.pack(fill="both", expand=True)
+
+        pre_tool_bar = tk.Frame(pre_tab_area, bg=self.PANEL, padx=25, pady=10)
+        pre_tool_bar.pack(fill="x")
+        tk.Label(pre_tool_bar, text="PRESET EXECUTION CONSOLE", font=self.FONT_BOLD, bg=self.PANEL, fg=self.ACCENT).pack(side="left")
+
+        pre_tools = tk.Frame(pre_tool_bar, bg=self.PANEL)
+        pre_tools.pack(side="right")
+        make_btn(pre_tools, "📋 Copy", self._copiar_preset, width=10, row=0, col=0)
+        make_btn(pre_tools, "🧹 Clear", self._limpiar_preset, fg=self.DANGER, width=10, row=0, col=1)
+
+        self.console_presets = scrolledtext.ScrolledText(
+            pre_tab_area, font=self.FONT_CONSOLE, bg=self.CONSOLE, fg="#D2A8FF",
+            insertbackground=self.TEXT, relief="flat", bd=10, wrap="none", state="disabled"
+        )
+        self.pre_hs = tk.Scrollbar(pre_tab_area, orient="horizontal", command=self.console_presets.xview)
+        self.console_presets.config(xscrollcommand=self.pre_hs.set)
+        
+        self.console_presets.pack(fill="both", expand=True, padx=25)
+        self.pre_hs.pack(fill="x", padx=25, pady=(0, 20))
+
         self._switch_mod_subtab = switch_mod_subtab
         # Start on the first sub-tab
         switch_mod_subtab(0)
@@ -738,6 +870,38 @@ class App(tk.Tk):
             self._update_preset_menu()
             self.status.config(text=f"[OK] Preset deleted", fg=self.SUCCESS)
 
+    def _show_preset_info(self):
+        accion = self.preset_action_var.get()
+        descr = self.preset_details.get(accion, "Sin descripción disponible.")
+
+        # Custom Dialog
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Info: {accion}")
+        dialog.geometry("500x400")
+        dialog.configure(bg=self.PANEL)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - 250
+        y = self.winfo_y() + (self.winfo_height() // 2) - 175
+        dialog.geometry(f"+{x}+{y}")
+
+        tk.Label(dialog, text=accion.upper(), font=self.FONT_TITLE, bg=self.PANEL, fg=self.ACCENT).pack(pady=(20, 10))
+        
+        txt_frame = tk.Frame(dialog, bg=self.BORDER, padx=1, pady=1)
+        txt_frame.pack(padx=30, fill="both", expand=True)
+        
+        txt = tk.Text(txt_frame, font=self.FONT_UI, bg=self.BG, fg=self.TEXT, 
+                      padx=15, pady=15, relief="flat", wrap="word")
+        txt.insert("1.0", descr)
+        txt.config(state="disabled")
+        txt.pack(fill="both", expand=True)
+
+        tk.Button(dialog, text="CERRAR", command=dialog.destroy, font=self.FONT_BOLD, 
+                  bg=self.BTN_BG, fg=self.TEXT, relief="flat", padx=30, pady=8, cursor="hand2").pack(pady=20)
+
     def _save_filtered_csv(self):
         if self.df_modify is None: return
         
@@ -769,6 +933,127 @@ class App(tk.Tk):
             os.startfile(salida_dir)
         except Exception as e:
             self.status.config(text=f"[ERROR] {e}", fg=self.DANGER)
+
+    # ── Presets Tab Methods ───────────────────────────────────
+    
+    def _update_preset_inputs(self, *args):
+        # Clear existing inputs
+        for widget in self.preset_inputs_frame.winfo_children():
+            widget.destroy()
+            
+        accion = self.preset_action_var.get()
+        
+        def make_field(parent, label, var, is_folder=True):
+            f = tk.Frame(parent, bg=self.BG, pady=5)
+            f.pack(fill="x")
+            
+            tk.Label(f, text=label, font=self.FONT_BOLD, bg=self.BG, fg=self.SUBTEXT).pack(side="top", anchor="w")
+            
+            row = tk.Frame(f, bg=self.BG)
+            row.pack(fill="x", pady=(2, 0))
+            row.columnconfigure(0, weight=1)
+            
+            ef = tk.Frame(row, bg=self.BORDER, padx=1, pady=1)
+            ef.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+            tk.Entry(ef, textvariable=var, font=self.FONT_UI, bg=self.PANEL, fg=self.TEXT,
+                     insertbackground=self.TEXT, relief="flat", bd=8).pack(fill="x")
+            
+            def sel():
+                if is_folder:
+                    r = filedialog.askdirectory(title=f"Select {label}")
+                else:
+                    r = filedialog.asksaveasfilename(
+                        title=f"Select {label}",
+                        defaultextension=".csv",
+                        filetypes=[("CSV Files", "*.csv")]
+                    )
+                if r: var.set(r)
+                
+            tk.Button(row, text="📂 Folder" if is_folder else "💾 Save As", 
+                      command=sel, font=self.FONT_BTN, bg=self.BTN_BG, fg=self.TEXT,
+                      activebackground=self.BTN_HOVER, relief="flat", bd=0, padx=15, pady=8, cursor="hand2").grid(row=0, column=1, padx=4)
+            
+            tk.Button(row, text="🚀 Open", 
+                      command=lambda: self._open_dir(var.get()), font=self.FONT_BTN, bg=self.ACCENT, fg="white",
+                      activebackground=self.BTN_HOVER, relief="flat", bd=0, padx=15, pady=8, cursor="hand2").grid(row=0, column=2, padx=4)
+
+        if accion == "Guardia HPN Process 1":
+            make_field(self.preset_inputs_frame, "GUARDIA ADULTOS FOLDER", self.hpn_adultos_var, is_folder=True)
+            make_field(self.preset_inputs_frame, "GUARDIA PEDIATRÍA FOLDER", self.hpn_pediatria_var, is_folder=True)
+            make_field(self.preset_inputs_frame, "OUTPUT FILE (CSV)", self.hpn_output_var, is_folder=False)
+        else:
+            # Default fallback or "Select Preset Action..."
+            tk.Label(self.preset_inputs_frame, text="Select a preset to see required inputs.", 
+                     font=self.FONT_UI, bg=self.BG, fg=self.SUBTEXT).pack(pady=20)
+
+    def _sel_archivo_preset(self):
+        # No longer used in dynamic UI
+        pass
+
+    def _limpiar_preset(self):
+        self.console_presets.configure(state="normal")
+        self.console_presets.delete("1.0", "end")
+        self.console_presets.configure(state="disabled")
+
+    def _copiar_preset(self):
+        contenido = self.console_presets.get("1.0", "end")
+        self.clipboard_clear()
+        self.clipboard_append(contenido)
+        self.status.config(text="[OK] Consola copiada", fg="#3fb950")
+        self.after(3000, lambda: self.status.config(text=""))
+
+    def _log_preset(self, texto):
+        self._escribir_consola(self.console_presets, texto)
+
+    def _ejecutar_preset(self):
+        accion = self.preset_action_var.get()
+        
+        if accion == "Select Preset Action...":
+            self._log_preset("[WARN] Selecciona una acción de la lista.")
+            return
+
+        # Simple validation
+        if accion == "Guardia HPN Process 1":
+            if not self.hpn_adultos_var.get() or not self.hpn_pediatria_var.get() or not self.hpn_output_var.get():
+                self._log_preset("[WARN] Por favor completa todas las rutas.")
+                return
+        
+        self.btn_run_preset.config(state="disabled")
+        self._log_preset(f"🚀 INICIANDO: {accion}")
+        self._log_preset("-" * 30)
+
+        def run():
+            try:
+                if accion == "Guardia HPN Process 1":
+                    self._run_guardia_hpn_logic()
+                else:
+                    self._log_preset(f"[INFO] Ejecutando {accion}...")
+                    import time
+                    time.sleep(1)
+                    self._log_preset("✅ Finalizado.")
+            except Exception as e:
+                self._log_preset(f"❌ [ERROR] {e}")
+            finally:
+                self.after(0, lambda: self.btn_run_preset.config(state="normal"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _run_guardia_hpn_logic(self):
+        adultos_path = self.hpn_adultos_var.get()
+        pediatria_path = self.hpn_pediatria_var.get()
+        output_path = self.hpn_output_var.get()
+        
+        # Call the modular logic
+        hpn_guardia_process.run(
+            adultos_path, 
+            pediatria_path, 
+            output_path, 
+            self._log_preset
+        )
+        
+        self.status.config(text="[OK] Guardia HPN terminada", fg="#3fb950")
+        os.startfile(Path(output_path).parent)
+
 
     def _ejecutar(self, accion):
         entrada = self.entrada_var.get().strip()
