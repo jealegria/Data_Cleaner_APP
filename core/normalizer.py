@@ -53,7 +53,7 @@ def detectar_y_parsear_fechas(df, log):
         fallos = int(convertida.isna().sum() - serie_clean.isna().sum())
         fallos = max(fallos, 0)
 
-        df[col] = convertida.dt.strftime('%Y-%m-%d %H:%M:%S').where(
+        df[col] = convertida.dt.strftime('%d/%m/%Y %H:%M:%S').where(
             convertida.notna(), other=np.nan
         )
 
