@@ -192,7 +192,7 @@ class App(tk.Tk):
         tk.Label(logo_frame, text=" |  Data Intelligence",
                  font=("Segoe UI", 11), bg=self.PANEL, fg=self.SUBTEXT).pack(side="left", padx=(5, 0), pady=(4, 0))
         
-        tk.Label(hdr, text="v1.3.0",
+        tk.Label(hdr, text="v1.3.1",
                  font=("Segoe UI", 9), bg=self.PANEL, fg=self.SUBTEXT).pack(side="right", pady=(8, 0))
         
         tk.Frame(self, bg=self.BORDER, height=1).pack(fill="x")

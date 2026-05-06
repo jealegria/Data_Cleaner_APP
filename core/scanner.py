@@ -46,8 +46,17 @@ def detectar_tipo_archivo(ruta):
     if ext == '.xls':
         with open(ruta, 'rb') as f:
             cab = f.read(512)
-        if b'<!DOCTYPE' in cab or b'<html' in cab.lower():
+        
+        # Magic number para Excel 97-2003 (.xls) binario (OLE2)
+        if cab.startswith(b'\xd0\xcf\x11\xe0'):
+            return 'excel_real'
+            
+        # Si no es binario y parece HTML/XML
+        cab_clean = cab.strip()
+        cab_lower = cab.lower()
+        if cab_clean.startswith(b'<') or b'<html' in cab_lower or b'<table' in cab_lower or b'<form' in cab_lower:
             return 'html_disfrazado'
+            
         return 'excel_real'
     return 'desconocido'
 
@@ -98,32 +107,50 @@ def cargar_excel_real(ruta):
 def cargar_html_disfrazado(ruta):
     from bs4 import BeautifulSoup
     contenido = None
+    enc_final = 'utf-8'
+    
     for enc in ['utf-8', 'utf-8-sig', 'cp1252', 'latin-1']:
         try:
             with open(ruta, 'r', encoding=enc, errors='strict') as f:
                 contenido = f.read()
+            enc_final = enc
             break
         except UnicodeDecodeError:
             continue
+            
     if contenido is None:
+        enc_final = 'utf-8'
         with open(ruta, 'r', encoding='utf-8', errors='replace') as f:
             contenido = f.read()
 
     soup = BeautifulSoup(contenido, 'lxml')
     tabla = soup.find('table')
     if not tabla:
-        raise ValueError("No se encontro tabla HTML en el archivo.")
+        # Si no hay tabla pero hay un form, avisamos que podría ser una página de login
+        if soup.find('form'):
+            raise ValueError("No se encontró tabla HTML, pero el archivo contiene un formulario. \n¿Es posible que la sesión haya caducado o sea una página de login?")
+        raise ValueError("No se encontró ninguna tabla HTML en el archivo.")
 
     filas = tabla.find_all('tr')
+    if not filas:
+        raise ValueError("La tabla HTML está vacía.")
+
+    # Intentar obtener encabezados de la primera fila
     headers = [th.get_text(strip=True) for th in filas[0].find_all('th')]
     if not headers:
         headers = [td.get_text(strip=True) for td in filas[0].find_all('td')]
-        filas = filas[1:]
 
     rows = []
+    # Los datos siempre empiezan después de la primera fila (que usamos para headers)
     for fila in filas[1:]:
         celdas = [td.get_text(strip=True) for td in fila.find_all('td')]
         if celdas:
+            # Asegurar que la fila tenga el mismo número de columnas que headers
+            # o truncar/rellenar si es necesario
+            if len(celdas) > len(headers):
+                celdas = celdas[:len(headers)]
+            elif len(celdas) < len(headers):
+                celdas.extend([''] * (len(headers) - len(celdas)))
             rows.append(celdas)
 
     return pd.DataFrame(rows, columns=headers), enc_final, "N/A"
