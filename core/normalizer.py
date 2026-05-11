@@ -27,9 +27,17 @@ def es_columna_de_fecha(nombre_col, serie):
     if len(no_nulos) == 0:
         return False
 
-    muestra = no_nulos.head(100)
+    muestra = no_nulos.head(100).astype(str)
+    
     try:
-        parseada = pd.to_datetime(muestra, format='mixed', dayfirst=True, errors='coerce')
+        # Intento de parseo robusto en dos pasos
+        # 1. ISO-like (YYYY-MM-DD)
+        mask_iso = muestra.str.match(r'^\d{4}-\d{2}-\d{2}', na=False)
+        p1 = pd.to_datetime(muestra[mask_iso], errors='coerce')
+        # 2. Otros (DayFirst=True)
+        p2 = pd.to_datetime(muestra[~mask_iso], dayfirst=True, errors='coerce')
+        
+        parseada = pd.concat([p1, p2])
         pct_ok = parseada.notna().mean()
         return pct_ok > 0.7
     except:
@@ -45,19 +53,42 @@ def detectar_y_parsear_fechas(df, log):
 
     for col in cols_fecha:
         serie_orig = df[col].copy()
-        serie_clean = serie_orig.replace({'nan': np.nan, '': np.nan})
+        serie_clean = serie_orig.replace({'nan': np.nan, '': np.nan, 'None': np.nan})
+        
+        # Limpiar strings antes de procesar
+        s_clean = serie_clean.astype(str).str.strip()
+        # Eliminar valores que son solo '#' (errores de visualización de Excel exportados)
+        s_clean = s_clean.replace(r'^#+$', np.nan, regex=True)
+        s_clean = s_clean.replace({'nan': np.nan, '': np.nan, 'None': np.nan})
 
-        convertida = pd.to_datetime(serie_clean, format='mixed', dayfirst=True, errors='coerce')
+        # Parseo robusto de dos pasos:
+        # 1. Identificar strings que parecen ISO (YYYY-MM-DD)
+        mask_iso = s_clean.str.match(r'^\d{4}-\d{2}-\d{2}', na=False)
+        
+        # 2. Parsear ISOs sin dayfirst
+        parsed_iso = pd.to_datetime(s_clean.where(mask_iso), errors='coerce')
+        
+        # 3. Parsear el resto con dayfirst=True
+        # Usamos format='mixed' si está disponible (Pandas >= 2.0)
+        try:
+            parsed_arg = pd.to_datetime(s_clean.where(~mask_iso), dayfirst=True, errors='coerce', format='mixed')
+        except:
+            parsed_arg = pd.to_datetime(s_clean.where(~mask_iso), dayfirst=True, errors='coerce')
+        
+        # 4. Combinar resultados
+        convertida = parsed_iso.fillna(parsed_arg)
 
         total_no_nulos = serie_clean.notna().sum()
         fallos = int(convertida.isna().sum() - serie_clean.isna().sum())
-        fallos = max(fallos, 0)
+        # Elegir formato de salida: si no hay horas/minutos en toda la columna, solo DD/MM/YYYY
+        tiene_tiempo = (convertida.dt.hour != 0).any() or (convertida.dt.minute != 0).any()
+        formato_final = '%d/%m/%Y %H:%M:%S' if tiene_tiempo else '%d/%m/%Y'
 
-        df[col] = convertida.dt.strftime('%d/%m/%Y %H:%M:%S').where(
+        df[col] = convertida.dt.strftime(formato_final).where(
             convertida.notna(), other=np.nan
         )
 
-        log(f"    [OK] {col}")
+        log(f"    [OK] {col} (Formato: {formato_final})")
         log(f"       Parseadas OK : {total_no_nulos - fallos:,} de {total_no_nulos:,}")
 
         if fallos > 0:

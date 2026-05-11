@@ -71,8 +71,8 @@ def inferir_tipo_bd(serie):
     if len(no_nulos) == 0:
         return "NULL (Sin datos validos)"
 
-    # Chequear fechas (nuestro script ya las paso a formato YYYY-MM-DD HH:MM:SS si lo eran)
-    if no_nulos.str.match(r'^\d{4}-\d{2}-\d{2}').all():
+    # Chequear fechas (nuestro script puede pasarlas a DD/MM/YYYY o YYYY-MM-DD)
+    if no_nulos.str.match(r'^(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4})').all():
         if no_nulos.str.endswith('00:00:00').all():
             return "DATE (Fecha)"
         return "TIMESTAMP (Fecha y Hora)"
@@ -107,7 +107,7 @@ def inferir_tipo_supabase(serie):
     no_nulos = serie.dropna()
     if len(no_nulos) == 0: return "NULL"
     
-    if no_nulos.str.match(r'^\d{4}-\d{2}-\d{2}').all():
+    if no_nulos.str.match(r'^(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4})').all():
         return "timestamp" if not no_nulos.str.endswith('00:00:00').all() else "date"
     
     try:
